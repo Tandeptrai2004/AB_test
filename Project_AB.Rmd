@@ -1,0 +1,775 @@
+---
+title: "AB_test mini project"
+author: "Lê Nguyễn Thanh Tân"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Library
+
+```{r, results = "hide", echo = TRUE, message=FALSE}
+library(nycflights13)
+library(janitor)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(lmPerm) 
+library(boot)
+```
+
+# Project 2 - Cookie Cats
+Cookie Cats là trò chơi giải đố cực kỳ nổi tiếng trên thiết bị di động được phát triển bởi Tactile Entertainment. Đây là một trò chơi giải đố kiểu "kết nối ba" cổ điển trong đó người chơi phải kết nối các ô cùng màu để xóa bảng và giành được cấp độ. Nó cũng có tính năng mèo ca hát.
+
+Khi người chơi tiến bộ trong trò chơi, họ sẽ gặp phải các cổng buộc họ phải đợi một thời gian trước khi có thể tiến bộ hoặc thực hiện mua hàng trong ứng dụng. Trong dự án này (https://www.datacamp.com/projects/184), chúng ta sẽ phân tích kết quả của thử nghiệm A/B trong đó cổng đầu tiên trong Cookie Cats được chuyển từ cấp 30 lên cấp 40. Đặc biệt, chúng ta sẽ phân tích tác động đến việc giữ chân người chơi.
+
+Dữ liệu **cookie_cats.csv** cung cấp thông tin của 90.189 người chơi đã cài đặt trò chơi trong khi kiểm định A/B testing được tiến hành. Các biến là:
+
+• **userid** - một số duy nhất xác định mỗi người chơi.
+
+• **version** - người chơi được đưa vào control group (gate_30 - bắt đầu với cổng ở cấp 30) hay treatment group (gate_40 - bắt đầu với cổng ở cấp 40).
+
+• **sum_gamerounds** - số vòng trò chơi mà người chơi đã chơi trong 2 tuần đầu tiên sau khi cài đặt.
+
+• **retention_1** - người chơi có quay lại và chơi sau 1 ngày cài đặt không?
+
+• **retention_7** - người chơi có quay lại và chơi sau 7 ngày cài đặt không?
+
+Hãy load dữ liệu và thực hiện một bản báo cáo cho nhà quản lý và phát triển game, với các nội dung như sau:
+
+1. Bảng tóm tắt, khái quát về dữ liệu.
+
+2. Đề ra các phương án xử lý dữ liệu dựa trên các công cụ của A/B testing nhằm đưa ra bằng chứng để trả lời cho câu hỏi: "Việc thay đổi cổng bắt đầu có thực sự ảnh hưởng tới doanh thu cũng như trải nghiệm của người chơi?".
+
+3. Hãy cố gắng tận dụng hết các biến được cung cấp, để xử lý dữ liệu theo các phương án đã đề ra.
+
+4. Viết các nhận xét và kết luận.
+
+## Mở đầu
+
+Đối với **Project 2 - Cookie Cats**, nhóm chúng em sẽ thực hiện trình bày làm ba phần chính:
+
+- Phần 1: Lập bảng tóm tắt và khái quát về dữ liệu **cookie_cats.csv** được cung cấp.
+
+- Phần 2: Đề ra các phương án xử lý dữ liệu dựa trên các công cụ của A/B testing nhằm đưa ra bằng chứng để trả lời cho câu hỏi: "Việc thay đổi cổng bắt đầu có thực sự ảnh hưởng tới doanh thu cũng như trải nghiệm của người chơi?".
+
+- Phần 3: Thực hiện các phương án đề xuất ở phần 2 lên dữ liệu **cookie_cats.csv**.
+
+## Bài làm
+
+### Phần 1: Lập bảng tóm tắt và khái quát về dữ liệu **cookie_cats.csv** được cung cấp.
+
+**Đọc dữ liệu**
+
+```{r}
+cookie <- read_csv("~/TH_XLSLTK/cookie_cats.csv") |> clean_names()
+cookie <- cookie |> mutate(retention_1 = factor(retention_1, labels = c("no","yes")),
+                           retention_7 = factor(retention_7, labels = c("no","yes")),
+                           version = factor(version))
+glimpse(cookie)
+```
+**Nhận xét:** Dữ liệu **cookie_cats.csv** có 5 biến ban đầu được giới thiệu ở phần trên, trong đó, biến **userid** ta sẽ không sử dụng nên ta sẽ tách riêng nó ra khỏi dữ liệu chúng ta cần phân tích.
+
+```{r}
+#cookie <- cookie[, -c(1)]
+names(cookie)
+```
+
+**Bảng tóm tắt**
+```{r}
+summary(cookie)
+```
+
+**Nhận xét:** 
+
+- Ta thấy rằng các biến *version*, *retention_1*, *retention_7* đều được chia làm hai nhóm và số lượng của mỗi nhóm trong các biến ày đều không bằng nhau.
+
+- Đối với biến định lượng *sum_gamerounds*, ta thấy rằng khoảng cách giữa giá trị nhỏ nhất và lớn nhất của dữ liệu rất lớn, nhất là giá trị lớn nhất cách rất xa trung bình và trung vị, khoảng cách của giá trị trung bình và trung vị cũng cho thấy dữ liệu có phân phối lệch.
+
+
+Để thấy được sự cách biệt đó rõ hơn, ta tính độ lệch chuẩn của dữ liệu:
+
+```{r}
+sd(cookie$sum_gamerounds)
+```
+
+**Nhận xét:** Ta thấy rằng: $sd = 195.0509$, là rất lớn nếu so với trung bình và trung vị, do đó, ta thấy rằng dữ liệu không phân bố đều, mà lệch khá nhiều.
+
+Ta quan tâm đến ba biến định tính *version*, *retention_1* và *retention_7.*
+
+- Đối với biến *version*:
+
+```{r}
+cookie |> group_by(version) |>
+  summarise(n = n(),
+            tb = mean(sum_gamerounds),
+            dlc = sd(sum_gamerounds))
+```
+
+- Nhận xét:
+
+  + Về số lượng: số lượng hai nhóm là khác nhau, chênh lệch khoảng 1000 quan sát.
+
+  + Về trung bình mỗi nhóm: giá trị là tương đối gần nhau.
+
+  + Về độ lệch chuẩn: $sd_{gate_30} = 256.7164$ và $sd_{gate_40} = 103.2944$ đều là những độ lệch rất lớn.
+
+Biểu đồ violin:
+
+```{r}
+ggplot(cookie, aes(x = version, y = sum_gamerounds, fill = version)) +
+  geom_violin() +
+  geom_boxplot(width = 0.15) +
+  scale_fill_manual(breaks = c("gate_30", "gate_40"),
+  values = c("forestgreen", "skyblue")) +
+  labs(x = "version", y = "sum of game rounds") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+Vì dữ liệu có điểm giá trị rất lớn nên ta sẽ scale dữ liệu lại bằng hàm log().
+
+
+```{r}
+ggplot(cookie, aes(x = version, y = log(sum_gamerounds), fill = version)) +
+  geom_violin() +
+  geom_boxplot(width = 0.15) +
+  scale_fill_manual(breaks = c("gate_30", "gate_40"),
+  values = c("forestgreen", "skyblue")) +
+  labs(x = "version", y = "sum of game rounds") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+- Nhận xét:
+
+  + Quan sát hình 1, ta thấy rằng dữ liệu sum_gamerounds của nhóm gate_30 tập trung nhiều ở dưới mức 5000, chỉ vài điểm là ngoại lệ, đối với nhóm gate_40 thì hoàn toàn trong vùng dưới 5000.
+
+  + Quan sát hình 2, khi dữ liệu được scale lại theo hàm log() thì dữ liệu tập trung dưới 8 đối với sum_gamerounds, khi này, ta quan sát được hai boxplot khá ngang bằng nhau, từ điểm giá trị nhỏ nhất tới khoảng hộp của boxplot. 
+
+  + HƠn nữa, theo trung bình tính được, ta thấy nhóm gate_30 = 52.5 và gate_40 = 51.3 thì giá trị chênh lệch giữa hai trung bình có thể coi là không có quá nhiều sự khác biệt. Tuy nhiên, dựa vào giá trị độ lệch chuẩn ta thấy ở cả hai nhóm đều có sự biến động lớn về giá trị, nhất là ở nhóm `gate_30`.
+  
+
+- Đối với biến *retention_1*:
+
+```{r}
+cookie |> group_by(retention_1) |>
+  summarise(n = n(),
+            tb = mean(sum_gamerounds),
+            dlc = sd(sum_gamerounds))
+```
+
+- Nhận xét:
+
+  + Về số lượng: số lượng hai nhóm là khác nhau, chênh lệch khoảng 10000 quan sát.
+
+  + Về trung bình mỗi nhóm: giá trị là khác biệt khá lớn, nhóm no là 17.3 còn nhóm yes là gần 95.
+
+  + Về độ lệch chuẩn: $sd_{no} = 225.7260$ và $sd_{yes} = 136.4721$ đều là những độ lệch rất lớn, đặc biệt là nhóm no có độ lệch lớn hơn rất nhiều so với nhóm yes.
+
+Biểu đồ violin:
+
+```{r}
+ggplot(cookie, aes(x = retention_1, y = sum_gamerounds, fill = retention_1)) +
+  geom_violin() +
+  geom_boxplot(width = 0.15) +
+  scale_fill_manual(breaks = c("no", "yes"),
+  values = c("forestgreen", "skyblue")) +
+  labs(x = "version", y = "sum of game rounds") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+Vì dữ liệu có điểm giá trị rất lớn nên ta sẽ scale dữ liệu lại bằng hàm log().
+
+
+```{r}
+ggplot(cookie, aes(x = retention_1, y = log(sum_gamerounds), fill = retention_1)) +
+  geom_violin() +
+  geom_boxplot(width = 0.15) +
+  scale_fill_manual(breaks = c("no", "yes"),
+  values = c("forestgreen", "skyblue")) +
+  labs(x = "version", y = "sum of game rounds") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+- Nhận xét:
+
+  + Quan sát hình 1, ta thấy rằng dữ liệu sum_gamerounds của nhóm no tập trung nhiều ở dưới mức 20000, chỉ vài điểm là ngoại lệ, đối với nhóm yes thì hoàn toàn trong vùng dưới 35000.
+
+  + Quan sát hình 2, khi dữ liệu được scale lại theo hàm log() thì dữ liệu tập trung dưới 8 đối với sum_gamerounds của nhóm no và 8.5 đối với nhóm yes, khi này, ta quan sát được hai boxplot là có chênh lệch với nhau, khoảng boxplot của nhóm no thấp hơn so với nhóm yes, độ biến động cũng lớn hơn thông qua biểu đồ violin. 
+
+  + HƠn nữa, theo trung bình tính được, ta thấy nhóm no = 17.3 và yes = 95 thì giá trị chênh lệch giữa hai trung bình có vẻ là khác biệt, tuy nhiên, ta chưa thể khẳng định vì độ lệch trong dữ liệu là vô cùng lớn và khác biệt trong mỗi nhóm.
+  
+- Đối với biến *retention_7*:
+
+```{r}
+cookie |> group_by(retention_7) |>
+  summarise(n = n(),
+            tb = mean(sum_gamerounds),
+            dlc = sd(sum_gamerounds))
+```
+
+- Nhận xét:
+
+  + Về số lượng: số lượng hai nhóm là khác nhau, chênh lệch khoảng 57000 quan sát.
+
+  + Về trung bình mỗi nhóm: giá trị là khác biệt khá lớn, nhóm no là xấp xỉ 26 còn nhóm yes là gần 166.
+
+  + Về độ lệch chuẩn: $sd_{no} = 43.87174$ và $sd_{yes} = 424.39474$ theo như giá trị thống kê từ các nhóm trước đến hiện tại, độ biến động dữ liệu trong nhóm no của biến retention_7 là khá thấp, và nhóm yes của biến retention_7 là quá cao.
+
+Biểu đồ violin:
+
+```{r}
+ggplot(cookie, aes(x = retention_7, y = sum_gamerounds, fill = retention_7)) +
+  geom_violin() +
+  geom_boxplot(width = 0.15) +
+  scale_fill_manual(breaks = c("no", "yes"),
+  values = c("forestgreen", "skyblue")) +
+  labs(x = "version", y = "sum of game rounds") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+Vì dữ liệu có điểm giá trị rất lớn nên ta sẽ scale dữ liệu lại bằng hàm log().
+
+
+```{r}
+ggplot(cookie, aes(x = retention_7, y = log(sum_gamerounds), fill = retention_7)) +
+  geom_violin() +
+  geom_boxplot(width = 0.15) +
+  scale_fill_manual(breaks = c("no", "yes"),
+  values = c("forestgreen", "skyblue")) +
+  labs(x = "version", y = "sum of game rounds") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+- Nhận xét:
+
+  + Quan sát hình 1, ta thấy rằng dữ liệu sum_gamerounds của nhóm yes tập trung nhiều ở dưới mức 30000, chỉ vài điểm là ngoại lệ, đối với nhóm no thì hoàn toàn trong vùng dưới 25000.
+
+  + Quan sát hình 2, khi dữ liệu được scale lại theo hàm log() thì dữ liệu tập trung dưới 8.5 đối với sum_gamerounds của cả hai nhóm, khi này, ta quan sát được hai boxplot là có chênh lệch với nhau, khoảng boxplot của nhóm no thấp hơn so với nhóm yes, độ biến động nhóm no cũng ổn định hơn so với nhóm yes.
+
+  + HƠn nữa, theo trung bình tính được, ta thấy nhóm no = 26 và yes = 166 thì giá trị chênh lệch giữa hai trung bình có vẻ là khác biệt, tuy nhiên, ta chưa thể khẳng định vì độ lệch trong dữ liệu là vô cùng lớn và khác biệt trong mỗi nhóm.
+ 
+### Phần 2: Đề ra các phương án xử lý dữ liệu dựa trên các công cụ của A/B testing.
+
+Từ phần tóm tắt, khái quát ở phần 1, ta đã biết được sơ lược về doanh thu (sum_gamerounds) trong dữ liệu ban đầu, khi đó ta sẽ trả lời cho câu hỏi: "Việc thay đổi cổng bắt đầu có thực sự ảnh hưởng tới doanh thu cũng như trải nghiệm của người chơi?" bằng cách đặt ra ba giả thuyết và đối thuyết sau:
+
+- Thứ nhất: Dựa trên biến version, biến biểu thị cho việc chọn cổng bắt đầu, ta có thể phát biểu giả thuyết và đối thuyết 1: 
+$$
+\begin{cases}
+  H_0: \mu_{gate\_30} = \mu_{gate\_40} \\
+  H_1: \mu_{gate\_30} \ne \mu_{gate\_40}
+\end{cases}
+$$
+
+
+- Thứ hai: dựa vào việc có sự khác biệt về trung bình hai nhóm trong biến retention_1, ta sẽ xét đến sự tương tác của biến retention_1 với biến version để xem nó có ảnh hưởng đến sự khác biệt của doanh thu cũng như trải nghiệm của người chơi hay không. Khi đó, ta xét 4 nhóm: gate_30_no, gate_30_yes, gate_40_no, gate_40_yes.
+
+Đặt trung bình của các nhóm gate_30_no, gate_30_yes, gate_40_no, gate_40_yes là: $\mu_1, \mu_2, \mu_3, \mu_4.$ Ta có thể phát biểu giả thuyết và đối thuyết 2: 
+
+$$
+\begin{cases}
+  H_0: \mu_1 = \mu_2 = \mu_3 = \mu_4 \\
+  H_1: \mu_i \ne \mu_j \ \forall i \ne j
+\end{cases}
+$$
+
+- Thứ ba: tương tự đối với biến retention_7. Khi đó, ta xét 4 nhóm: gate_30_no, gate_30_yes, gate_40_no, gate_40_yes.
+
+Đặt trung bình của các nhóm gate_30_no, gate_30_yes, gate_40_no, gate_40_yes là: $\mu_1, \mu_2, \mu_3, \mu_4.$ Ta có thể phát biểu giả thuyết và đối thuyết 3: 
+
+$$
+\begin{cases}
+  H_0: \mu_1 = \mu_2 = \mu_3 = \mu_4 \\
+  H_1: \mu_i \ne \mu_j \ \forall i \ne j
+\end{cases}
+$$
+
+### Phần 3: Thực hành trên dữ liệu.
+
+#### 1. Giả thuyết và đối thuyết 1.
+
+$$
+\begin{cases}
+  H_0: \mu_{gate\_30} = \mu_{gate\_40} \\
+  H_1: \mu_{gate\_30} \ne \mu_{gate\_40}
+\end{cases}
+$$
+
+Ta sử dụng permutation ANOVA.
+
+```{r, error=TRUE}
+set.seed(1)
+out_aov_1 <- aovp(formula = sum_gamerounds ~ version, data = cookie, perm = "Prob")
+```
+
+Ta thấy rằng do dữ liệu quá lớn và hàm `aovp` không thể xử lý được nên ta sẽ viết hàm permutation và áp dụng cho bài toán trên.
+
+```{r}
+perm_test <- function(x, y, R, alter) {
+  mean_A <- split(x,y)[[1]] |> mean()
+  mean_B <- split(x,y)[[2]] |> mean()
+  mean_diff <- mean_A - mean_B
+  
+  nA <- split(x,y)[[1]] |> length()
+  nB <- split(x,y)[[2]] |> length()
+  n <- nA + nB
+  
+  res_perm <- numeric(R)
+  for (i in 1:R) {
+    idx_a <- sample(x = 1:n, size = nA, replace = FALSE)  
+    idx_b <- setdiff(x = 1:n, y = idx_a)                 
+    res_perm[i] <- mean(x[idx_a]) - mean(x[idx_b])       
+  }
+  
+  if (alter == "left"){
+    p_value = mean(res_perm < (mean_A - mean_B))
+  } else {
+    if (alter == "right"){
+      p_value = mean(res_perm > (mean_A - mean_B))
+    }
+  else {
+      p_value = mean(abs(res_perm) > abs(mean_A - mean_B))
+  }
+  }
+  
+  return(list(
+    p_value = p_value
+  ))
+}
+```
+
+```{r}
+set.seed(1)
+perm_test(cookie$sum_gamerounds, cookie$version, R = 1000, alter = "two_side")
+```
+
+**Nhận xét:** Với mức ý nghĩa $p_value = 0.468 > \alpha = 0.05$, kết quả cho thấy ta không có đủ cơ sở để bác bỏ $H_0$, tức việc thay đổi cổng bắt đầu không làm thay đổi số lượng vòng trò chơi mà người chơi đã chơi.
+
+#### 2. Giả thuyết và đối thuyết 2.
+
+$$
+\begin{cases}
+  H_0: \mu_1 = \mu_2 = \mu_3 = \mu_4 \\
+  H_1: \mu_i \ne \mu_j \ \forall i \ne j
+\end{cases}
+$$
+
+**Đọc dữ liệu**
+
+```{r}
+data_cookie<-read.csv("datasets/cookie_cats.csv")|>clean_names()
+glimpse(data_cookie)
+```
+
+Ta sẽ tạo biến tương tác giữa version và retention_1:
+
+```{r}
+data_cookie <- data_cookie |> mutate(retention_1 = factor(retention_1, labels = c("no","yes")))
+data_cookie<-data_cookie|> mutate(version_retention_1=interaction(version,retention_1))|>clean_names()
+```
+
+**Tóm tắt khái quát**
+
+Ta sẽ xem xét sự khác biệt, mức độ phân bố của số vòng chơi của 2 nhóm người chơi bao gồm nhóm người chơi không quay lại sau 1 ngày và nhóm người quay lại sau 1 ngày:
+
+```{r}
+data_cookie |> group_by(version_retention_1) |>
+  summarise(n = n(),
+            tb = mean(sum_gamerounds),
+            dlc = sd(sum_gamerounds),
+            gtnn = min(sum_gamerounds),
+            gtln = max(sum_gamerounds))
+```
+
+
+- Nhận xét:
+
+  + Về số lượng: số lượng bốn nhóm là khác nhau, chênh lệch khá lớn giữ các nhóm.
+
+  + Về trung bình mỗi nhóm: hai giá trị liên quan đến nhóm người không quay lại sau 1 ngày là gần nhau và hai giá trị liên quan đến nhóm người quay lại sau 1 ngày cũng gần nhau, và giữa hai nhóm này là cách biệt nhau.
+
+  + Về độ lệch chuẩn: các biên độ dao động giá trị trong mỗi nhóm đều khá lớn đặc biệt là gate_30.no.
+
+
+```{r}
+ggplot(data_cookie, aes(x = version_retention_1, y = sum_gamerounds, fill = version)) +
+  geom_violin() +
+  geom_boxplot(width = 0.15) +
+  labs(x = "version", y = "sum of game rounds") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+Vì dữ liệu quá lớn nên ta sẽ dùng hàm log để điều chỉnh lại tỉ lệ của dữ liệu trong khi in dồ thị,vì tổng vòng chơi luôn lớn hơn bằng không nên ta sẽ không sợ nó ảnh hưởng đến mức độ phân bố dữ liệu.
+
+
+```{r, warning=FALSE}
+ggplot(data_cookie, aes(x = version_retention_1, y = log(sum_gamerounds), fill = version)) +
+  geom_violin() +
+  geom_boxplot(width = 0.15) +
+  labs(x = "version", y = "sum of game rounds") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+- Nhận xét: Từ bảng và biểu đồ trên ta có thể thấy có sự biến dộng giữa 2 nhóm quay lại và không quay lại tại 2 cổng dựa vào trung bình mỗi nhóm, bên cạnh đó độ lệch chuẩn của nhóm "gate_30.no" cao bất thường so với nhóm còn lại, có thể là do giá trị ngoại lai tác động đến nhóm này,đồng thời cũng có nhóm người chơi chỉ tải app về rồi để đó hoặc vô tình click vào do gtnn của các nhóm đều bằng không
+
+**Tiến hành ANOVA**
+Nhằm xét sự khác biệt giữa các nhóm ta sẽ dùng ANOVA để xem các nhóm có khác nhau không:
+
+```{r, error=TRUE}
+set.seed(11)
+out_aov_1 <- aovp(formula = sum_gamerounds ~ version_retention_1, data = data_cookie, perm = "Prob")
+```
+
+Vì hàm này không thể xử lý dữ liệu quá lớn nên ta sẽ viết thử hàm này dựa trên thuật toán permutation anova:
+
+```{r}
+calc_stats <- function(response, group) {
+  k <- length(unique(group))
+  n <- table(group)
+  n_sample <- sum(n)
+  sample_mean <- mean(response)
+  
+  SSW <- sum(sapply(split(response, group), function(x) var(x) * (length(x) - 1)))
+  SSB <- sum(n * (tapply(response, group, mean) - sample_mean)^2)
+  MSW <- SSW / (n_sample - k)
+  MSB <- SSB / (k - 1)
+  F_sample <- MSB / MSW
+  
+  return(F_sample)
+}
+```
+
+```{r}
+perm_aov <- function(response, group, R){
+  k <- length(unique(group))
+  n <- table(group)
+  n_sample <- sum(n)
+
+  F_obs <- calc_stats(response, group)
+  F_perm <- numeric(R)
+  for (i in 1:R) {
+    idx <- vector("list", k)  
+    number <- 1:n_sample 
+    
+    for (j in 1:k) {
+      n_j <- n[j] 
+      idx[[j]] <- sample(x = number, size = n_j, replace = FALSE)  
+      number <- setdiff(number, idx[[j]]) 
+    }
+    perm_response <- unlist(lapply(idx, function(x) response[x]))
+    F_perm[i] <- calc_stats(perm_response, group)
+  }
+  
+  p_value <- mean(F_perm > F_obs)
+  return(p_value)
+}
+```
+
+```{r}
+perm_aov(data_cookie$sum_gamerounds,data_cookie$version_retention_1, R = 1000)
+```
+
+- Nhận xét: p_value = 0, do đó, ta đủ cơ sở để nói rằng sự khác nhau giữa các trung bình mà ta quan tâm là đúng với mức ý nghĩa $\alpha = 0.05$.
+
+
+Hàm perm_aov sẽ trả về tỉ lệ chứng minh giả thuyết rằng các nhóm này không có khác biệt gì, và ta có thể thấy kết quả ra không tức là việc quay lại chơi game sau một ngày giữ 2 nhóm có sự khác nhau rõ rệt song nhóm quay lại hoặc không quay lại và nhóm version thì 2 nhóm này nhóm nào mang mức độ ảnh hưởng tốt đến tổng số vòng chơi, chúng ta sẽ thực hiện thêm kiểm định tỉ lệ quay lại sau 1 ngày theo nhóm version.
+
+Trước tiên ta sẽ thay đổi dữ liệu từ yes no của biến "retention_1" thành 1 cho yes và 2 cho no:
+
+```{r}
+data_cookie <- data_cookie |> 
+  mutate(retention_1 = factor(retention_1, levels = c("no", "yes"), labels = c(1, 0)))
+glimpse(data_cookie)
+```
+
+Giờ chúng ta sẽ thực hiện kiểm định tỉ lệ dựa vào kiểm định Z.
+
+Giả thuyết đặt ra là:
+
+$$
+\begin{cases}
+  H_0: p_{gate\_30.yes} = p_{gate\_40.yes} \\
+  H_1: p_{gate\_30.yes}\ne p_{gate\_40.yes}
+\end{cases}
+$$
+
+```{r}
+data_cookie|>tabyl(version,retention_1)
+```
+
+```{r}
+percent_30 <- sum(data_cookie$version == "gate_30" & data_cookie$retention_1 == 1) /
+              sum(data_cookie$version == "gate_30")
+
+percent_40 <- sum(data_cookie$version == "gate_40" & data_cookie$retention_1 == 1) /
+              sum(data_cookie$version == "gate_40")
+
+
+p <- sum(data_cookie$retention_1 == 1) / nrow(data_cookie)
+
+
+n_30 <- sum(data_cookie$version == "gate_30")
+n_40 <- sum(data_cookie$version == "gate_40")
+
+Z <- (percent_30 - percent_40) / sqrt(p * (1 - p) * (1/n_30 + 1/n_40))
+
+# Calculate p-value for two-tailed test
+p_value <- 1 - pnorm(abs(Z))
+
+
+cat("p-value:", p_value, "\n")
+
+if (p_value < 0.05) {
+  cat("Bác bỏ giả thuyết H0 do đó có sự khác biệt giữa hai tỷ lệ.\n")
+} else {
+  cat("Không bác bỏ giả thuyết H0 nên không có sự khác biệt giữa hai tỷ lệ.\n")
+}
+```
+
+Vậy có sự khác biệt giữ tỉ lệ quay lại sau 1 ngày trong 2 nhóm, nhưng nhóm version nào thu hút nhiều sự quay lại cao hơn,ta tiếp tục kiểm định giả thuyết:
+
+$$
+\begin{cases}
+  H_0: p_{gate\_30.yes} < p_{gate\_40.yes} \\
+  H_1: p_{gate\_30.yes} > p_{gate\_40.yes}
+\end{cases}
+$$
+
+Do có sự khác biệt 2 nhóm nên tại H1 chỉ có lớn hơn
+
+```{r}
+p_value <- pnorm(Z)
+# Output result
+cat("p-value:", p_value, "\n")
+
+if (p_value < 0.05) {
+  cat("Bác bỏ giả thuyết H0 do đó tỉ lệ quay lại sau một ngày của nhóm bắt đầu từ vòng 30 lớn hơn nhóm bắt đầu từ vòng 40.\n")
+} else {
+  cat("Không bác bỏ giả thuyết H0 nên tỉ lệ quay lại sau một ngày của nhóm bắt đầu từ vòng 30 bé hơn nhóm bắt đầu từ vòng 40.\n")
+}
+```
+
+Vậy tỉ lệ quay lại của 2 nhóm chính là yếu quyết định đến việc trung bình người chơi sẽ chơi nhiều vòng hơn nhưng bên cạnh đó vẫn có nhiều người chơi một lần rồi không quay lại vì họ chơi quá nhiều nên không quay lại bằng chứng là outlier tại cổng 30 dù giá trị ngoại lai cao nhưng số vòng trung bình chơi lại rất thấp vì vậy nên việc đảm bảo tỉ lệ quay lại sẽ cải thiện trung bình mức dộ thu hút người chơi hơn, rõ ràng ta có thể thấy trung bình nhóm quay lại chơi có trung bình cao hơn, và ta nên tập trung vào trải nghiệm của version gate 30 hơn vì tỉ lệ quay lại của họ cũng rất cao.
+
+#### 3. Giả thuyết và đối thuyết 3.
+
+$$
+\begin{cases}
+  H_0: \mu_1 = \mu_2 = \mu_3 = \mu_4 \\
+  H_1: \mu_i \ne \mu_j \ \forall i \ne j
+\end{cases}
+$$
+
+```{r}
+cookie_cats <- read_csv("datasets/cookie_cats.csv", na = c("NA","N/A","")) |> 
+  clean_names()
+cookie_cats <- cookie_cats |>
+  mutate(retention_1 = factor(retention_1, labels = c("no","yes")),
+    retention_7 = factor(retention_7, labels = c("no","yes")))
+glimpse(cookie_cats)
+```
+
+**Bảng tóm tắt, khái quát về dữ liệu**
+
+```{r}
+cookie_cats <- cookie_cats |> mutate(ver_ren_2 = interaction(version, retention_7))
+glimpse(cookie_cats)
+```
+
+```{r}
+summary(cookie_cats)
+```
+
+**Đối với biến định lượng** `sum_gamerounds`
+
+```{r}
+cookie_cats |> summarise(tb = mean(sum_gamerounds),
+                    tv = median(sum_gamerounds),
+                    dlc = sd(sum_gamerounds),
+                    gtnn = min(sum_gamerounds),
+                    gtln = max(sum_gamerounds))
+```
+
+**Thống kê biến định lượng theo nhóm**
+
+Ta quan tâm đến `ver_ren_2`
+
+```{r}
+cookie_cats |> group_by(ver_ren_2) |>
+  summarise(n = n(),
+            tb = mean(sum_gamerounds),
+            dlc = sd(sum_gamerounds))
+```
+
+-\> Nhận xét:
+
+1)  Số vòng chơi trung bình giữa các nhóm không cho thấy khác biệt đáng kể, nghĩa là việc thay đổi vị trí cổng không ảnh hưởng rõ ràng đến hành vi chơi game.
+
+2)  Độ lệch chuẩn cao trong nhóm gate_30.yes gợi ý rằng số vòng chơi của những người quay lại có sự biến động lớn, trong khi nhóm gate_40.yes ổn định hơn.
+
+3)  Tỷ lệ người chơi quay lại hơi thấp hơn ở gate_40 so với gate_30. Tuy nhiên, cần thêm kiểm định thống kê để xác định xem sự khác biệt này có ý nghĩa hay không.
+
+**Bảng tổng hợp**
+
+```{r}
+cookie_cats |> group_by(ver_ren_2) |>
+  summarise(n = n(),
+            tb = mean(sum_gamerounds),
+            dlc = sd(sum_gamerounds),
+            gtnn = min(sum_gamerounds),
+            gtln = max(sum_gamerounds))
+```
+
+**Biểu đồ violin**
+
+```{r, warning=FALSE}
+ggplot(cookie_cats, aes(x = ver_ren_2, y = log(sum_gamerounds), fill = ver_ren_2)) +
+  geom_violin() +
+  geom_boxplot(width = 0.15) +
+  labs(x = "version", y = "sum of game rounds") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+-\> **Nhận xét**: Từ bảng tần số và đồ thị ta thấy số lượng người chơi không quay lại và chơi sau 7 ngày ở `gate_30` và `gate_40` có sự khác biệt so với số lượng người chơi quay lại và cài đặt sau 7 ngày ở `gate_30` và `gate_40`, dựa vào giá trị độ lệch chuẩn ta thấy ở cả bốn nhóm đều có sự biến động lớn về giá trị, nhất là ở nhóm `gate_30` và `gate_40`.
+
+Ta sử dụng phương pháp permutation ANOVA để kiểm định. **Hàm calc_stats** và **Hàm perm_aov** đã được định nghĩa ở phương án 2.
+
+**Gọi hàm perm_aov để tính toán**
+
+```{r}
+perm_aov(cookie_cats$sum_gamerounds, cookie_cats$ver_ren_2, R=500)
+```
+
+-\> **Nhận xét:** Với mức ý nghĩa $\alpha$ = 0.05, cho ta thấy sự tương tác giữa cổng bắt đầu và việc người chơi có quay lại và chơi sau 7 ngày cài đặt thực sự ảnh hưởng tới doanh thu cũng như trải nghiệm của người chơi.
+
+#### 4. Phần mở rộng thêm
+
+**Preprocessing Data**
+
+Đối với biến định lượng `sum_gamerounds`, ta vẽ đồ thị hist và boxplot để xem xu hướng và mức độ tập trung của dữ liệu.
+
+```{r}
+ggplot(data = cookie, aes(x = sum_gamerounds)) +
+geom_histogram(fill = "white", color = "black", bins = 30)
+```
+
+Ví dụ, ta ước lượng hàm mật độ xác suất cho cân nặng của trẻ sơ sinh:
+```{r}
+ggplot(cookie, aes(x = sum_gamerounds)) +
+geom_density(color = "blue", bw = "nrd0", kernel = "gaussian")
+```
+
+```{r}
+# Biểu đồ boxplot
+ggplot(data=cookie,aes(y = sum_gamerounds)) +
+  geom_boxplot(fill="white",color ="black") +
+  labs("Bieu do hop the hien so vong choi cua nguoi choi",
+  y = "So vong choi của nguoi choi",x = "") +
+  theme_grey()
+```
+
+**Nhận xét:** từ các đồ thị trên, ta nhận thấy rằng trong dữ liệu có tồn tại một số giá trị ngoại lai - outliers ( tức giá trị đặc biệt cách xa so với phần lớn dữ liệu còn lại), do đó hình vẽ không thể thể hiện được tính xu hướng và mức độ tập trung của dữ liệu. Do đó, ta sẽ kiểm tra thử liệu rằng trong dữ liệu có tồn tại giá trị ngoại lai hay không.
+
+Để nhận dạng sự hiện diện của outliers trong dữ liệu, ta có thể dùng
+
+- khoảng tứ phân vị - IQR, cụ thể, các điểm nằm ngoài khoảng giá trị
+
+$$ 
+[ Q_1 - 1.5 \times IQR, Q_3 + 1.5 \times IQR ]
+$$
+thì được coi là outliers trong dữ liệu.
+
+Ta sẽ viết hàm kiểm tra outliers bằng phương pháp sử dụng khoảng tứ phân vị như sau:
+
+```{r}
+checking_outliers_iqr <- function(data_variable,option){
+  q25 <- quantile(data_variable)[2]
+  q75 <- quantile(data_variable)[4]
+  iqr = q75 - q25
+  
+  upper = q75 + iqr * 1.5
+  lower = q25 - iqr * 1.5
+  cat("Khoảng giá trị:", "[",lower,",",upper,"]","\n")
+  
+  outliers_index <- which(data_variable > upper | data_variable < lower)
+  cat("Số giá trị ngoại lai của biến là:", length(outliers_index),"\n","\n")
+  
+  outlier <- data.frame(outliers = outliers_index)
+  
+  if (option == "TRUE"){
+    return(outlier)
+  }
+}
+```
+
+Giải thích: 
+
+- **input:**
+
+  + data_variable: vector chứa giá trị của biến định lượng cần kiểm định;
+  
+  + option: với đối số là `TRUE` thì hàm sẽ đưa ra cho ta một data frame các giá trị ngoại lai, ngược lại là đối số `FALSE`.
+  
+- **ouput:** hàm sẽ trả về khoảng giá trị để xét outliers cũng như các giá trị outliers cụ thể tùy thuộc đối số khi input.
+  
+Ta áp dụng hàm trên vào biến định lượng `sum_gamerounds`.
+
+```{r}
+checking_outliers_iqr(cookie$sum_gamerounds, option = "FALSE")
+```
+
+**Nhận xét:** đối với phương pháp dùng khoảng tứ phân vị, ta xác định được trong biến `sum_gamerounds` có tất cả 10.177 outliers.
+
+- Một phương pháp khác để nhận dạng được sự hiện diện của giá trị ngoại lai, đó là ta dùng bộ lọc Hampel - Hampel filter, cụ thể, ta xét khoảng
+
+$$ 
+[ median - 3 \times MAD, median + 3 \times MAD ]
+$$
+nếu giá trị không nằm trong khoảng này, thì được coi là outliers.
+
+Phương pháp trên được thể hiện qua hàm được viết như sau:
+
+```{r}
+checking_outliers_hampel <- function(data_variable,option){
+  median <- median(data_variable)
+  mad <- mad(data_variable)
+  cat("median:", median,"\n")
+  cat("MAD:", mad,"\n")
+  
+  upper = median + 3*mad
+  lower = median - 3*mad
+  cat("Khoảng giá trị:", "[",lower,",",upper,"]","\n")
+  
+  outliers_index <- which(data_variable > upper | data_variable < lower)
+  cat("Số giá trị ngoại lai của biến là:", length(outliers_index),"\n","\n")
+  
+  outlier <- data.frame(outliers = outliers_index)
+  
+  if (option == "TRUE"){
+    return(outlier)
+  }
+}
+```
+
+Tương tự **input** của hàm `checking_outliers_iqr`, chỉ khác nhau ở kết quả **output**.
+
+Ta áp dụng hàm trên vào biến định lượng `sum_gamerounds`.
+
+```{r}
+checking_outliers_hampel(cookie$sum_gamerounds, option = "FALSE")
+```
+
+**Nhận xét:** đối với bộ lọc Hampel, ta xác định được trong biến `sum_gamerounds` có tất cả 15.700 outliers.
+
+Đối với môn học ở thời điểm hiện tại, ta chỉ mới biết làm thế nào để tìm ra các giá trị outliers, và đối với số lượng giá trị outliers lớn như vậy (lớn hơn 10% tổng số của dữ liệu) thì ta chưa có một phương pháp xử lý cụ thể. Trong thực tế hoặc bên lĩnh vực data science, các nhà nghiên cứu thường xử lý chúng bằng cách thay các giá trị đó thành giá trị trung bình của dữ liệu đó. Tuy nhiên, trong bài làm này, ta chỉ đưa ra con số giá trị outliers để nhằm đưa ra khuyến cáo cho các nhà nghiên cứu khác cũng như người đọc khi đọc các kết quả ước lượng từ các phương pháp trên, rằng sẽ có sự chênh lệch (bias) giữa giá trị ước lượng và giá trị thực tế của bộ dữ liệu. 
+
+
